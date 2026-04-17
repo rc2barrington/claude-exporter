@@ -3,17 +3,22 @@ import { useState } from "react";
 // The console snippet — readable, well-formatted version
 const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
 (async function() {
-  // Step 1: Find the scroll container
-  var scrollEl = document.querySelector('[class*="overflow-y-auto"]');
-  if (!scrollEl) {
-    // fallback: try to find any scrollable ancestor
-    var test = document.querySelector('[data-testid="user-message"]');
-    if (test) {
-      var p = test;
-      while (p.parentElement) {
-        p = p.parentElement;
-        if (p.scrollHeight > p.clientHeight + 100) { scrollEl = p; break; }
-      }
+  // Step 1: Find a user message to anchor from
+  var firstUser = document.querySelector('[data-testid="user-message"]');
+  if (!firstUser) {
+    alert("No messages found. Make sure you're on a Claude.ai conversation page.");
+    return;
+  }
+
+  // Step 2: Find the scroll container by walking up from the user message
+  var scrollEl = null;
+  var p = firstUser;
+  while (p.parentElement) {
+    p = p.parentElement;
+    var style = window.getComputedStyle(p);
+    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && p.scrollHeight > p.clientHeight + 100) {
+      scrollEl = p;
+      break;
     }
   }
 
@@ -22,38 +27,33 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
     return;
   }
 
-  // Step 2: Scroll through the entire conversation to load all messages
-  console.log("\\u23f3 Scrolling through conversation to load all messages...");
+  // Step 3: Scroll through the entire conversation to load all messages
+  console.log("Scrolling through conversation to load all messages...");
   scrollEl.scrollTop = 0;
   await new Promise(function(r) { setTimeout(r, 500); });
 
+  // First pass: quick scroll to warm up
   var lastScrollTop = -1;
-  var scrollAttempts = 0;
-  while (scrollAttempts < 500) {
+  var attempts = 0;
+  while (attempts < 500) {
     scrollEl.scrollTop += scrollEl.clientHeight - 50;
-    await new Promise(function(r) { setTimeout(r, 150); });
+    await new Promise(function(r) { setTimeout(r, 100); });
     if (scrollEl.scrollTop === lastScrollTop) break;
     lastScrollTop = scrollEl.scrollTop;
-    scrollAttempts++;
-    if (scrollAttempts % 20 === 0) {
-      var pct = Math.round((scrollEl.scrollTop / (scrollEl.scrollHeight - scrollEl.clientHeight)) * 100);
-      console.log("   Scrolling... " + pct + "%");
-    }
+    attempts++;
   }
 
-  // Scroll back to top and give it a moment
+  // Scroll back to top
   scrollEl.scrollTop = 0;
   await new Promise(function(r) { setTimeout(r, 500); });
 
-  // Now scroll once more slowly to ensure everything is in the DOM
+  // Second pass: scroll and capture messages at each position
   lastScrollTop = -1;
   var allMessages = new Map();
 
   while (true) {
-    // Capture visible messages at this scroll position
     var userMsgEls = document.querySelectorAll('[data-testid="user-message"]');
     if (userMsgEls.length > 0) {
-      // Find container
       var container = null;
       var el = userMsgEls[0];
       while (el.parentElement) {
@@ -65,14 +65,13 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
           var child = container.children[i];
           var text = (child.innerText || "").trim();
           if (!text) continue;
-          // Use position as key to avoid duplicates
           var key = text.slice(0, 100);
           if (!allMessages.has(key)) {
             var userMsg = child.querySelector('[data-testid="user-message"]');
             if (userMsg) {
-              allMessages.set(key, { role: "## \\ud83e\\uddd1 You", content: userMsg.innerText.trim(), pos: child.offsetTop });
+              allMessages.set(key, { role: "## You", content: userMsg.innerText.trim(), pos: child.offsetTop });
             } else {
-              allMessages.set(key, { role: "## \\ud83e\\udd16 Claude", content: text, pos: child.offsetTop });
+              allMessages.set(key, { role: "## Claude", content: text, pos: child.offsetTop });
             }
           }
         }
@@ -85,7 +84,6 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
     lastScrollTop = scrollEl.scrollTop;
   }
 
-  // Sort by position and deduplicate
   var messages = Array.from(allMessages.values());
   messages.sort(function(a, b) { return a.pos - b.pos; });
 
@@ -94,17 +92,18 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
     return;
   }
 
-  console.log("\\ud83d\\udcca Found " + messages.length + " messages");
+  console.log("Found " + messages.length + " messages");
 
-  // Step 3: Build the markdown and download
+  // Step 4: Build markdown and download
   var title = document.title.replace(/[-|].*Claude.*/i, "").trim() || "Claude Conversation";
   var date = new Date().toLocaleString();
-  var md = "# " + title + "\\n\\n";
-  md += "> Exported from Claude.ai on " + date + "\\n\\n";
-  md += "---\\n\\n";
+  var nl = String.fromCharCode(10);
+  var md = "# " + title + nl + nl;
+  md += "> Exported from Claude.ai on " + date + nl + nl;
+  md += "---" + nl + nl;
   messages.forEach(function(msg, i) {
-    md += msg.role + "\\n\\n" + msg.content + "\\n\\n";
-    if (i < messages.length - 1) md += "---\\n\\n";
+    md += msg.role + nl + nl + msg.content + nl + nl;
+    if (i < messages.length - 1) md += "---" + nl + nl;
   });
 
   var blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
@@ -116,7 +115,7 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
   a.click();
   document.body.removeChild(a);
   setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
-  console.log("\\u2705 Exported " + messages.length + " messages: " + a.download);
+  console.log("Exported " + messages.length + " messages: " + a.download);
 })();`;
 
 const steps = [
