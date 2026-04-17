@@ -50,28 +50,37 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
   // Second pass: scroll and capture messages at each position
   lastScrollTop = -1;
   var allMessages = new Map();
+  var globalOrder = 0;
 
   while (true) {
     var userMsgEls = document.querySelectorAll('[data-testid="user-message"]');
+
+    // For each visible user message, walk up to find its turn container
+    // then iterate siblings to find both user and Claude turns
     if (userMsgEls.length > 0) {
+      // Walk up from first user message to find conversation container
+      // Use a lower threshold since virtual scrolling shows fewer items
       var container = null;
       var el = userMsgEls[0];
+      var depth = 0;
       while (el.parentElement) {
         el = el.parentElement;
-        if (el.children.length > 20) { container = el; break; }
+        depth++;
+        if (el.children.length > 3 && depth >= 4) { container = el; break; }
       }
+
       if (container) {
         for (var i = 0; i < container.children.length; i++) {
           var child = container.children[i];
           var text = (child.innerText || "").trim();
           if (!text) continue;
-          var key = text.slice(0, 100);
+          var key = text.slice(0, 150);
           if (!allMessages.has(key)) {
             var userMsg = child.querySelector('[data-testid="user-message"]');
             if (userMsg) {
-              allMessages.set(key, { role: "## You", content: userMsg.innerText.trim(), pos: child.offsetTop });
+              allMessages.set(key, { role: "## You", content: userMsg.innerText.trim(), order: globalOrder++ });
             } else {
-              allMessages.set(key, { role: "## Claude", content: text, pos: child.offsetTop });
+              allMessages.set(key, { role: "## Claude", content: text, order: globalOrder++ });
             }
           }
         }
@@ -85,7 +94,7 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
   }
 
   var messages = Array.from(allMessages.values());
-  messages.sort(function(a, b) { return a.pos - b.pos; });
+  messages.sort(function(a, b) { return a.order - b.order; });
 
   if (!messages.length) {
     alert("No messages found.");
