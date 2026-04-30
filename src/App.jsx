@@ -1,19 +1,28 @@
 import { useState } from "react";
 
 // The console snippet — readable, well-formatted version
-const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
+const consoleCode = `// AI Conversation Exporter (Claude, ChatGPT & Gemini)
 (async function() {
-  // Step 1: Find a user message to anchor from
-  var firstUser = document.querySelector('[data-testid="user-message"]');
-  if (!firstUser) {
-    alert("No messages found. Make sure you're on a Claude.ai conversation page.");
+  var isChatGPT = !!document.querySelector('[data-message-author-role]');
+  var isClaude = !!document.querySelector('[data-testid="user-message"]');
+  var isGemini = !!document.querySelector('user-query');
+
+  if (!isChatGPT && !isClaude && !isGemini) {
+    alert("No messages found. Make sure you're on a Claude.ai, ChatGPT, or Gemini conversation page.");
     return;
   }
 
-  // Step 2: Find the scroll container by walking up from the user message
-  var scrollEl = null;
-  var p = firstUser;
-  while (p.parentElement) {
+  var siteName = isChatGPT ? "ChatGPT" : (isClaude ? "Claude" : "Gemini");
+  
+  // Find the scroll container
+  var scrollEl = document.documentElement;
+  var firstMsg;
+  if (isChatGPT) firstMsg = document.querySelector('[data-message-author-role]');
+  else if (isClaude) firstMsg = document.querySelector('[data-testid="user-message"]');
+  else if (isGemini) firstMsg = document.querySelector('user-query');
+  
+  var p = firstMsg;
+  while (p && p.parentElement) {
     p = p.parentElement;
     var style = window.getComputedStyle(p);
     if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && p.scrollHeight > p.clientHeight + 100) {
@@ -22,29 +31,38 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
     }
   }
 
-  if (!scrollEl) {
-    alert("Could not find scrollable conversation area.");
-    return;
-  }
-
-  // Step 3: Scroll through the entire conversation to load all messages
   console.log("Scrolling through conversation to load all messages...");
-  scrollEl.scrollTop = 0;
+  
+  if (scrollEl === document.documentElement) {
+    window.scrollTo(0, 0);
+  } else {
+    scrollEl.scrollTop = 0;
+  }
   await new Promise(function(r) { setTimeout(r, 500); });
 
   // First pass: quick scroll to warm up
   var lastScrollTop = -1;
   var attempts = 0;
   while (attempts < 500) {
-    scrollEl.scrollTop += scrollEl.clientHeight - 50;
+    var clientHeight = scrollEl === document.documentElement ? window.innerHeight : scrollEl.clientHeight;
+    if (scrollEl === document.documentElement) {
+      window.scrollBy(0, clientHeight - 50);
+    } else {
+      scrollEl.scrollTop += clientHeight - 50;
+    }
     await new Promise(function(r) { setTimeout(r, 100); });
-    if (scrollEl.scrollTop === lastScrollTop) break;
-    lastScrollTop = scrollEl.scrollTop;
+    var newScroll = scrollEl === document.documentElement ? window.scrollY : scrollEl.scrollTop;
+    if (newScroll === lastScrollTop) break;
+    lastScrollTop = newScroll;
     attempts++;
   }
 
   // Scroll back to top
-  scrollEl.scrollTop = 0;
+  if (scrollEl === document.documentElement) {
+    window.scrollTo(0, 0);
+  } else {
+    scrollEl.scrollTop = 0;
+  }
   await new Promise(function(r) { setTimeout(r, 500); });
 
   // Second pass: scroll and capture messages at each position
@@ -53,44 +71,70 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
   var globalOrder = 0;
 
   while (true) {
-    var userMsgEls = document.querySelectorAll('[data-testid="user-message"]');
-
-    // For each visible user message, walk up to find its turn container
-    // then iterate siblings to find both user and Claude turns
-    if (userMsgEls.length > 0) {
-      // Walk up from first user message to find conversation container
-      // Use a lower threshold since virtual scrolling shows fewer items
-      var container = null;
-      var el = userMsgEls[0];
-      var depth = 0;
-      while (el.parentElement) {
-        el = el.parentElement;
-        depth++;
-        if (el.children.length > 3 && depth >= 4) { container = el; break; }
-      }
-
-      if (container) {
-        for (var i = 0; i < container.children.length; i++) {
-          var child = container.children[i];
-          var text = (child.innerText || "").trim();
-          if (!text) continue;
-          var key = text.slice(0, 150);
-          if (!allMessages.has(key)) {
-            var userMsg = child.querySelector('[data-testid="user-message"]');
-            if (userMsg) {
-              allMessages.set(key, { role: "## You", content: userMsg.innerText.trim(), order: globalOrder++ });
-            } else {
-              allMessages.set(key, { role: "## Claude", content: text, order: globalOrder++ });
+    if (isClaude) {
+      var userMsgEls = document.querySelectorAll('[data-testid="user-message"]');
+      if (userMsgEls.length > 0) {
+        var container = null;
+        var el = userMsgEls[0];
+        var depth = 0;
+        while (el.parentElement) {
+          el = el.parentElement;
+          depth++;
+          if (el.children.length > 3 && depth >= 4) { container = el; break; }
+        }
+        if (container) {
+          for (var i = 0; i < container.children.length; i++) {
+            var child = container.children[i];
+            var text = (child.innerText || "").trim();
+            if (!text) continue;
+            var key = text.slice(0, 150);
+            if (!allMessages.has(key)) {
+              var userMsg = child.querySelector('[data-testid="user-message"]');
+              if (userMsg) {
+                allMessages.set(key, { role: "## You", content: userMsg.innerText.trim(), order: globalOrder++ });
+              } else {
+                allMessages.set(key, { role: "## Claude", content: text, order: globalOrder++ });
+              }
             }
           }
         }
       }
+    } else if (isChatGPT) {
+      var msgEls = document.querySelectorAll('[data-message-author-role]');
+      msgEls.forEach(function(el) {
+        var text = (el.innerText || "").trim();
+        if (!text) return;
+        var roleAttr = el.getAttribute('data-message-author-role');
+        var role = roleAttr === 'user' ? "## You" : "## ChatGPT";
+        var key = text.slice(0, 150);
+        if (!allMessages.has(key)) {
+          allMessages.set(key, { role: role, content: text, order: globalOrder++ });
+        }
+      });
+    } else if (isGemini) {
+      var msgEls = document.querySelectorAll('user-query, model-response');
+      msgEls.forEach(function(el) {
+        var text = (el.innerText || "").trim();
+        if (!text) return;
+        var role = el.tagName.toLowerCase() === 'user-query' ? "## You" : "## Gemini";
+        var key = text.slice(0, 150);
+        if (!allMessages.has(key)) {
+          allMessages.set(key, { role: role, content: text, order: globalOrder++ });
+        }
+      });
     }
 
-    scrollEl.scrollTop += scrollEl.clientHeight - 50;
+    var clientHeight = scrollEl === document.documentElement ? window.innerHeight : scrollEl.clientHeight;
+    if (scrollEl === document.documentElement) {
+      window.scrollBy(0, clientHeight - 50);
+    } else {
+      scrollEl.scrollTop += clientHeight - 50;
+    }
+    
     await new Promise(function(r) { setTimeout(r, 200); });
-    if (scrollEl.scrollTop === lastScrollTop) break;
-    lastScrollTop = scrollEl.scrollTop;
+    var newScroll = scrollEl === document.documentElement ? window.scrollY : scrollEl.scrollTop;
+    if (newScroll === lastScrollTop) break;
+    lastScrollTop = newScroll;
   }
 
   var messages = Array.from(allMessages.values());
@@ -104,11 +148,11 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
   console.log("Found " + messages.length + " messages");
 
   // Step 4: Build markdown and download
-  var title = document.title.replace(/[-|].*Claude.*/i, "").trim() || "Claude Conversation";
+  var title = document.title.replace(/[-|].*(Claude|ChatGPT|Gemini).*/i, "").trim() || (siteName + " Conversation");
   var date = new Date().toLocaleString();
   var nl = String.fromCharCode(10);
   var md = "# " + title + nl + nl;
-  md += "> Exported from Claude.ai on " + date + nl + nl;
+  md += "> Exported from " + siteName + " on " + date + nl + nl;
   md += "---" + nl + nl;
   messages.forEach(function(msg, i) {
     md += msg.role + nl + nl + msg.content + nl + nl;
@@ -125,13 +169,13 @@ const consoleCode = `// Claude Conversation Exporter (with auto-scroll)
   document.body.removeChild(a);
   setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
   console.log("Exported " + messages.length + " messages: " + a.download);
-})();`;
+})();`;;
 
 const steps = [
   {
     num: "01",
-    title: "Open a Claude conversation",
-    detail: "Go to claude.ai and open any conversation you want to export.",
+    title: "Open a Chat conversation",
+    detail: "Go to chatgpt.com, gemini.google.com, or claude.ai and open any conversation you want to export.",
     icon: "💬",
   },
   {
@@ -182,7 +226,7 @@ export default function App() {
             textTransform: "uppercase",
             marginBottom: 20,
           }}>
-            Claude.ai Utility Tool
+            AI Chat Utility Tool
           </div>
           <h1 style={{
             fontSize: "clamp(28px, 5vw, 44px)",
@@ -203,7 +247,7 @@ export default function App() {
             margin: 0,
             maxWidth: 480,
           }}>
-            Export any Claude conversation as a clean Markdown file. Just copy the script, paste it into your browser console, and hit Enter. No extensions, no sign-in, no data leaves your browser.
+            Export any Claude, ChatGPT, or Gemini conversation as a clean Markdown file. Just copy the script, paste it into your browser console, and hit Enter. No extensions, no sign-in, no data leaves your browser.
           </p>
         </div>
 
@@ -261,7 +305,7 @@ export default function App() {
             marginBottom: 0,
             lineHeight: 1.6,
           }}>
-            Then paste into the Chrome console on any Claude conversation
+            Then paste into the Chrome console on any Claude, ChatGPT, or Gemini conversation
           </p>
         </div>
 
@@ -404,12 +448,12 @@ export default function App() {
             whiteSpace: "pre-wrap",
           }}>
 <span style={{color:"#6b7fff"}}># My Conversation Title</span>{"\n\n"}
-<span style={{color:"#555"}}>{"> "}Exported from Claude.ai on 4/16/2026, 10:32:00 AM</span>{"\n\n"}
+<span style={{color:"#555"}}>{"> "}Exported from ChatGPT / Claude / Gemini on 4/16/2026, 10:32:00 AM</span>{"\n\n"}
 <span style={{color:"#555"}}>---</span>{"\n\n"}
 <span style={{color:"#a0c4ff"}}>## 🧑 You</span>{"\n\n"}
 <span style={{color:"#ccc"}}>What is the capital of France?</span>{"\n\n"}
 <span style={{color:"#555"}}>---</span>{"\n\n"}
-<span style={{color:"#a8d8a8"}}>## 🤖 Claude</span>{"\n\n"}
+<span style={{color:"#a8d8a8"}}>## 🤖 ChatGPT / Claude / Gemini</span>{"\n\n"}
 <span style={{color:"#ccc"}}>The capital of France is Paris...</span>
           </div>
         </div>
@@ -457,7 +501,7 @@ export default function App() {
           fontSize: 12,
           lineHeight: 1.8,
         }}>
-          <strong style={{ color: "#555" }}>Privacy note:</strong> The script runs entirely in your browser. No data is sent anywhere — the .md file goes straight to your Downloads folder. Works on any Claude account you're logged into.
+          <strong style={{ color: "#555" }}>Privacy note:</strong> The script runs entirely in your browser. No data is sent anywhere — the .md file goes straight to your Downloads folder. Works on any Claude, ChatGPT, or Gemini account you're logged into.
         </div>
 
       </div>
