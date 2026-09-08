@@ -21,9 +21,13 @@
 //   - `developer` messages are injected instructions (skills_instructions,
 //     app-context), never conversation, so they are dropped.
 
+import { attachmentText } from "./attachments.js";
+
 export function parseCodexJsonl(fileContent, opts = {}) {
   const lines = String(fileContent || "").split("\n");
   const messages = [];
+  const attachments = [];
+  const warnings = [];
   let firstTimestamp = null;
   let lastTimestamp = null;
   let meta = null;
@@ -48,13 +52,14 @@ export function parseCodexJsonl(fileContent, opts = {}) {
     if (ts) currentTurn.timestamp = ts;
   };
 
-  for (const rawLine of lines) {
+  for (const [lineIndex, rawLine] of lines.entries()) {
     const line = rawLine.trim();
     if (!line) continue;
     let obj;
     try {
       obj = JSON.parse(line);
     } catch {
+      warnings.push(`Source record ${lineIndex + 1} could not be parsed. Its contents are not included in this export.`);
       continue;
     }
 
@@ -72,8 +77,8 @@ export function parseCodexJsonl(fileContent, opts = {}) {
 
     switch (p.type) {
       case "message": {
-        if (p.role === "developer") break; // injected instructions
-        const text = collectText(p.content);
+        if (!["user", "assistant"].includes(p.role)) break; // injected instructions
+        const text = collectText(p.content, attachments);
         if (p.role === "user") {
           const cleaned = cleanUserText(text);
           if (!cleaned) break; // pure scaffolding turn
@@ -119,7 +124,7 @@ export function parseCodexJsonl(fileContent, opts = {}) {
 
       case "custom_tool_call_output":
       case "function_call_output": {
-        const out = collectText(p.output);
+        const out = collectText(p.output, attachments);
         pushAssistant(
           { type: "tool_result", tool_use_id: p.call_id, content: out, is_error: false },
           obj.timestamp
@@ -142,6 +147,8 @@ export function parseCodexJsonl(fileContent, opts = {}) {
     startedAt,
     endedAt,
     messages,
+    attachments,
+    warnings,
     source: "Codex",
   };
 }
@@ -169,7 +176,7 @@ function deriveTitle(explicit, messages, meta, fileName) {
   return "Codex Session";
 }
 
-function collectText(content) {
+function collectText(content, attachments) {
   if (!content) return "";
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -179,6 +186,7 @@ function collectText(content) {
       if (!b || typeof b !== "object") return "";
       // input_text / output_text / summary_text all use `text`.
       if (typeof b.text === "string") return b.text;
+      if (attachments && ["input_image", "image", "input_file", "file"].includes(b.type)) return attachmentText(b, attachments);
       return "";
     })
     .filter(Boolean)
@@ -195,8 +203,7 @@ function parseMaybeJson(value) {
   }
 }
 
-// Codex wraps slash commands and injected context in the same tag style as
-// Claude Code. Reconstruct the invocation, drop the machine-generated noise.
+// Reconstruct slash-command invocations and remove injected XML scaffolding.
 function cleanUserText(raw) {
   if (!raw) return "";
   let text = raw;

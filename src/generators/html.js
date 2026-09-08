@@ -100,7 +100,7 @@ export function generateHtml(session, opts = {}) {
     `;
   }
 
-  const sourceLabel = session.source || "Claude Code";
+  const sourceLabel = session.source || "AI chat";
   const dateStr = session.date ? ` on ${session.date}` : "";
   const subtitle = `Exported from ${sourceLabel}${dateStr}`;
 

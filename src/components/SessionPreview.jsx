@@ -105,8 +105,8 @@ export function SessionPreview({ session, includeThinking, includeTools, include
           <h2 style={{ fontSize: 20, fontWeight: 800, color: "#ffffff", marginBottom: 8 }}># {session.title}</h2>
           <div style={{ color: "#64748b", fontStyle: "italic", fontSize: 12 }}>
             {session.date
-              ? `> Exported from ${session.source || "Claude Code"} on ${session.date}`
-              : `> Exported from ${session.source || "Claude Code"}`}
+              ? `> Exported from ${session.source || "AI chat"} on ${session.date}`
+              : `> Exported from ${session.source || "AI chat"}`}
           </div>
         </div>
 
@@ -171,7 +171,7 @@ export function SessionPreview({ session, includeThinking, includeTools, include
 
 function roleNameFor(source) {
   if (source === "Codex") return "Codex";
-  return "Claude";
+  return source || "Assistant";
 }
 function roleEmojiFor(source) {
   if (source === "Codex") return "🧩";

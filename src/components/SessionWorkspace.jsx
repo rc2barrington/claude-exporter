@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Dropzone } from "./Dropzone.jsx";
+import { LocalSessionPicker } from "./LocalSessionPicker.jsx";
 import { SessionList } from "./SessionList.jsx";
 import { SessionPreview } from "./SessionPreview.jsx";
 import { Switch } from "./Switch.jsx";
@@ -18,9 +19,7 @@ import {
   forgetDirectory,
 } from "../utils/dirHandle.js";
 
-// Shared workspace UI for any file-based source. Currently used by the
-// Claude Code tab; the folderAccess and noMatchHelp props are generic and
-// kept for future sources that need directory access.
+// Shared workspace UI for Codex and OpenCode imports and local discovery.
 // Pass:
 //   accept            file extensions to accept
 //   parseFile(file)   async (file: File) => parsedSession | null
@@ -28,7 +27,7 @@ import {
 //   sourceLabel       header text for the dropzone
 //   noMatchHelp       optional node rendered when a scan yields zero sessions,
 //                     for sources whose files browsers tend to miss (hidden dirs)
-export function SessionWorkspace({ accept, parseFile, showToolToggles, sourceLabel, folderAccess, noMatchHelp }) {
+export function SessionWorkspace({ accept, parseFile, showToolToggles, sourceLabel, folderAccess, noMatchHelp, localSource }) {
   // Defaults favour a complete, ready-to-read transcript: everything the
   // session contained, untruncated, with no metadata header.
   const [includeThinking, setIncludeThinking] = useState(true);
@@ -216,6 +215,12 @@ export function SessionWorkspace({ accept, parseFile, showToolToggles, sourceLab
 
   return (
     <div>
+      {localSource && <LocalSessionPicker source={localSource} onLoad={sessions => {
+        setSelected(new Set());
+        setParseError("");
+        setParsedSession(sessions.length === 1 ? sessions[0] : null);
+        setAvailableSessions(sessions.length === 1 ? [] : sessions);
+      }} />}
       <div className="card-panel">
         <p className="card-title">Export Settings</p>
         <div className="config-group">

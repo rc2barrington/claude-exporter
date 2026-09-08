@@ -31,5 +31,6 @@ export async function bundleZip(files) {
     used.add(name);
     zip.file(name, f.content, { date });
   }
+  zip.forEach((_path, entry) => { entry.date = date; });
   return zip.generateAsync({ type: "blob" });
 }

@@ -7,7 +7,7 @@ const stepsFor = (repliesOnlyText) => [
   {
     num: "01",
     title: "Open a chat conversation",
-    detail: "Go to chatgpt.com, gemini.google.com, claude.ai, or grok.com and open any conversation you want to export.",
+    detail: "Open a ChatGPT, Gemini, Claude.ai, Grok, Google AI Mode conversation, or a Google Search page with an AI Overview.",
     icon: "💬",
   },
   {
@@ -20,8 +20,8 @@ const stepsFor = (repliesOnlyText) => [
     num: "03",
     title: "Paste & run the script",
     detail: `Click "Copy Console Script" above, paste into the console with Cmd+V, and press Enter. The ${
-      repliesOnlyText ? ".txt file" : ".md file"
-    } downloads instantly.`,
+      repliesOnlyText ? ".txt file" : ".md file (or .zip when media is saved)"
+    } downloads when the export finishes.`,
     icon: "📥",
   },
 ];
@@ -47,7 +47,7 @@ export function BrowserChatsTab() {
         <p className="card-title" style={{ color: "#a78bfa", marginBottom: 12 }}>⚡ Chrome Extension (Recommended)</p>
         <div style={{ fontSize: 13, lineHeight: 1.6, color: "#cbd5e1" }}>
           <p style={{ marginBottom: 12, fontWeight: 500 }}>
-            Export chat tabs directly from any page without copy-pasting code into the developer console.
+            Export ChatGPT, Claude.ai, Gemini, Grok, Google AI Overviews and Google AI Mode without pasting code into the developer console.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, textAlign: "left", background: "rgba(0, 0, 0, 0.2)", padding: 16, borderRadius: 10, border: "1px solid rgba(255, 255, 255, 0.02)", marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 8 }}><span style={{ color: "#a78bfa", fontWeight: 700 }}>1.</span> <span>Open Google Chrome and navigate to <code>chrome://extensions/</code></span></div>

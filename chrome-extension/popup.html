@@ -370,7 +370,7 @@
         <img src="icons/icon32.png" alt="Logo" class="logo-icon" />
         <h1>AI Chat Exporter</h1>
       </div>
-      <span class="version-badge">v0.1.0</span>
+      <span class="version-badge">v0.2.0</span>
     </header>
 
     <main>
@@ -417,7 +417,7 @@
         <div class="option-row">
           <div class="option-info">
             <span class="option-label">Include Media</span>
-            <span class="option-desc">Save images, video, audio & files</span>
+            <span class="option-desc">Save all media and original uploads, including .md</span>
           </div>
           <label class="switch">
             <input type="checkbox" id="toggle-media" checked />
@@ -438,6 +438,7 @@
 
     <!-- JSZip Library -->
     <script src="lib/jszip.min.js"></script>
+    <script src="exportSelection.js"></script>
     <!-- Extension Logic -->
     <script src="popup.js"></script>
   </body>

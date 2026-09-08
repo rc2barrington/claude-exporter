@@ -14,7 +14,7 @@ export function generateMarkdown(session, opts = {}) {
     includeThinking = true,
     includeTools = false,
     includeResults = false,
-    truncateChars = 2000,
+    truncateChars = 0,
     frontmatter = false,
   } = opts;
 
@@ -31,7 +31,8 @@ export function generateMarkdown(session, opts = {}) {
   }
 
   md += `# ${session.title}${NL}${NL}`;
-  const sourceLabel = session.source || "Claude Code";
+  for (const warning of session.warnings || []) md += `> Export warning: ${warning}${NL}${NL}`;
+  const sourceLabel = session.source || "AI chat";
   if (session.date) {
     md += `> Exported from ${sourceLabel} on ${session.date}${NL}${NL}`;
   } else {

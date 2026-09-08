@@ -1,129 +1,83 @@
 # AI Chat Exporter
 
-A utility to export your AI conversations into beautifully formatted Markdown files. 100% private and runs entirely locally in your browser.
+Save browser conversations and local Codex or OpenCode sessions as readable Markdown, with available attachments. No sign-up, analytics, or exporter-hosted conversation storage.
 
-## Features
+**[Open the website](https://rc2barrington.github.io/ai-chat-exporter/)**
 
-- **Chrome Extension** scans open ChatGPT, Claude.ai, Gemini, and Grok tabs, exports each in its own unthrottled window, and downloads them without manual console pasting.
-- **Browser Chats** export web-based conversations using a paste-in console script (fallback if you don't use the extension).
-- **Claude Code** parses local `.jsonl` transcripts and renders thinking blocks, tool calls, and tool results (each toggleable). Supports bulk-scan of an entire `~/.claude/projects/` folder with selectable per-session export.
-- **Codex** parses Codex CLI rollout transcripts from `~/.codex/sessions/YYYY/MM/DD/`, with the same thinking/tool toggles and bulk scan. Both tabs offer a one-click **Open my … chats** button (File System Access API), because `~/.claude` and `~/.codex` are hidden folders that Chrome's drag-and-drop and folder picker silently skip.
-- **Replies only, plain text (`.txt`)** is a Browser Chats option that switches the console script to save a `.txt` of just the assistant's replies with markdown syntax stripped — no user turns, images, or YAML header. Fenced code keeps its contents verbatim, and media downloads are skipped entirely. The stripper lives in `src/utils/stripMarkdown.js` and is embedded into the generated script via `Function.prototype.toString`, so the copyable script and the tested implementation cannot drift apart.
-- **Live preview** of every session, rendered with `marked` + `DOMPurify` so code blocks, lists, tables, and inline formatting display correctly.
-- **Bulk export to `.zip`** via JSZip (single-prompt save instead of N separate downloads).
-- **Copy as Markdown** alongside the existing Download button.
-- **Search and sort** across discovered sessions (by date, title, or message count).
-- **Tool field truncation** with a configurable character cap to keep huge tool outputs out of your exports.
-- **Single-file HTML build** for fully offline use.
+## Get started
 
-## Setup
+### Browser chats
 
-### Web App Setup
-```sh
-npm install
-npm run dev
-```
+1. Download the Chrome extension from the website and unzip it somewhere permanent.
+2. Open `chrome://extensions`, enable Developer mode, and use **Load unpacked** to select the extracted extension folder.
+3. Open the extension, select chats, choose whether to include attachments, and export.
 
-### Chrome Extension Setup
-1. Open Google Chrome and go to `chrome://extensions/`.
-2. Turn on **Developer mode** (top-right toggle).
-3. Click **Load unpacked** (top-left button).
-4. Select the `chrome-extension` directory inside this repository.
+Supported sources: ChatGPT, Claude.ai, Gemini, Grok, Google AI Overviews and Google Search AI Mode on google.com. Exports run in existing tabs without moving or activating them. Updating an unpacked extension requires replacing its files and clicking Reload in Chrome.
 
-## Scripts
+### Codex and OpenCode
 
-| Command | What it does |
-|---------|--------------|
-| `npm run dev` | Vite dev server |
-| `npm run build` | GitHub Pages bundle in `dist/` (served from `/ai-chat-exporter/`) |
-| `npm run build:standalone` | Single self-contained `dist-standalone/index.html` (no network needed) |
-| `npm test` | Run the Vitest suite (parsers + generator) |
-| `npm run lint` | ESLint over `src/` and `tests/` |
-| `npm run deploy` | Build and publish `dist/` to the `gh-pages` branch (commit author is pinned, regardless of local git config) |
+On the website, choose Codex or OpenCode and download the Mac local app. Unzip it, then double-click **Open AI Chat Exporter.command**. Requires [Node.js](https://nodejs.org/en/download) 22.13 or newer. No `npm install` is needed for the packaged app. Keep its launcher window open while exporting.
 
-## Project layout
+The local app automatically lists saved chats. Search, select, and export. Everything starts unselected. Conversation bodies are read only when you preview or export them.
 
-```
-src/
-  App.jsx                       tab shell
-  parsers/
-    browserScript.js            string of the paste-in console export script
-    claudeJsonl.js              .jsonl parser: prunes edited branches, normalizes blocks
-    codexJsonl.js               Codex rollout parser: response_item only, merges turns
-  generators/
-    markdown.js                 session -> markdown with options
-  utils/
-    download.js                 sanitizeFilename, downloadBlob, copyToClipboard
-    files.js                    recursive folder reading via webkitGetAsEntry
-    dirHandle.js                File System Access API: pick + remember a folder (IndexedDB), recursive collect
-    markdownRender.js           marked + DOMPurify for the live preview
-    stripMarkdown.js            markdown -> plain text; embedded into the console script
-    zip.js                      JSZip bundler with filename de-duplication
-  components/
-    BrowserChatsTab.jsx
-    ClaudeCodeTab.jsx
-    CodexTab.jsx
-    SessionWorkspace.jsx        shared dropzone + list + preview flow
-    SessionList.jsx             search/filter + sort
-    SessionPreview.jsx          macOS-window-styled live preview
-    Dropzone.jsx                drag-and-drop with dragenter-counter (no flicker)
-    PathHints.jsx               copyable platform-specific paths
-    Switch.jsx                  toggle row
-tests/
-  claudeJsonl.test.js
-  codexJsonl.test.js
-  markdown.test.js
-  stripMarkdown.test.js
-  html.test.js
-```
+- Codex: discovers `sessions` and `archived_sessions` under `$CODEX_HOME`, defaulting to `~/.codex`. Reads titles from the local state database or session index. Parses the rollout message stream once, excluding mirrored UI events and injected system/developer instructions.
+- OpenCode: reads `$XDG_DATA_HOME/opencode/opencode.db`, defaulting to `~/.local/share/opencode/opencode.db`, in read-only transactions. Includes text, saved reasoning, file parts, tool calls and results; excludes reverted tail messages.
+- Manual file import is optional: Codex `.jsonl` rollouts or OpenCode `.json` exports. Imported files stay in your browser. To copy local `file:` attachments, use automatic discovery in the local app.
+- Local coding-agent support is intentionally limited to Codex and OpenCode. Claude.ai remains a supported browser source.
 
-## Format references
+## Export behavior
 
-### Claude Code `.jsonl`
+- No attachment files saved: a plain `.md` file, no empty media folder or ZIP.
+- Attachments saved: a ZIP containing `conversation.md` and `media/`.
+- Multiple local chats: one ZIP with a separate folder for each conversation.
+- Exact duplicate images: one saved copy per conversation. SHA-256 groups candidates, then their bytes are compared. Different encodings and similar-looking images remain separate. Every occurrence still links to the retained image.
+- Batch export requires two separate confirmations of the selected chat names. The extension worker validates the confirmed selection snapshot too.
+- Message text and tool output are not truncated by the current interface. The parser cannot undo truncation already present in a provider's saved records.
+- Cancel stops active requests and prevents further downloads. It does not delete files already downloaded.
+- Unavailable attachments are identified in the conversation and status display. No separate error-log file is generated.
+- All ZIP entries, including automatically created folders, receive the current local modification time. ZIP timestamps have two-second precision. Archive filenames use the local date.
 
-Each line is one JSON object. Recognized shapes:
+## Completeness and limits
 
-```jsonc
-{ "type": "ai-title",     "aiTitle": "string" }
-{ "type": "custom-title", "customTitle": "string" }
-{ "type": "user",      "message": { "content": "string | block[]" }, "timestamp": "ISO", "uuid": "…", "parentUuid": "…" }
-{ "type": "assistant", "message": { "content": "block[]" }, "timestamp": "ISO", "requestId": "…", "uuid": "…", "parentUuid": "…" }
-```
+ChatGPT text is reconstructed from the authoritative active root-to-current chain, including paginated history. If that chain cannot be established, no partial ChatGPT export is presented as complete. Markdown uses `history_status: complete` for a verified chain. An optional rendered-media recovery sweep no longer produces a misleading `root history reached: false` field in the document.
 
-Block types rendered: `text`, `thinking`, `tool_use`, `tool_result`. Consecutive assistant entries sharing a `requestId` are merged. `tool_result` blocks that arrive inside a "user" turn are attached to the preceding assistant turn rather than emitted as a "You" message.
+Other browser providers use the messages available through their pages. Their output is a page capture, not an independently verified server history. Website changes, virtualized histories, authentication and expired attachment links can affect results. Gemini images are labeled neutrally, not assumed to be generated merely because Gemini displayed them.
 
-Three structural details drive the parser:
+The extension transports data in acknowledged 256 Ki-character chunks instead of one giant Chrome message. There is no configured total attachment count, total transfer size, or whole-export deadline. Individual network requests still time out when stalled. Browser memory, ZIP format constraints, disk space and provider access remain real limits.
 
-- **The log is a forest, not a list.** `uuid` / `parentUuid` form a tree; editing or retrying a message forks it and both branches persist. At each fork only the subtree containing the newest activity is kept, so rewritten messages don't appear. A single file also holds several independent root chains (resuming starts a new root), so every root is preserved rather than following one chain back from the newest leaf.
-- **Not every line is conversation.** `isMeta` marks injected context (system reminders, hook output) and `isSidechain` marks inlined subagent transcripts; both are skipped. So are the `queue-operation`, `last-prompt`, `mode`, `system`, `attachment`, and `pr-link` bookkeeping lines.
-- **Slash commands carry scaffolding.** A `/model` invocation is stored as `<command-name>`, `<command-message>`, `<command-args>`, and `<local-command-stdout>` wrappers inside the user turn. The invocation is reconstructed and the wrappers dropped; turns that were nothing but scaffolding are discarded.
-
-A user-set `custom-title` wins over the generated `ai-title`. Encrypted thinking blocks (a `signature` with no `thinking` text) are skipped.
-
-### Codex rollout `.jsonl`
-
-Stored at `~/.codex/sessions/<year>/<month>/<day>/rollout-<timestamp>-<uuid>.jsonl`. Every line is `{ timestamp, type, payload }`.
-
-```jsonc
-{ "type": "session_meta",  "payload": { "id": "…", "cwd": "…", "cli_version": "…" } }
-{ "type": "response_item", "payload": { "type": "message", "role": "user|assistant|developer", "content": [{ "type": "input_text|output_text", "text": "…" }] } }
-{ "type": "response_item", "payload": { "type": "reasoning", "summary": [{ "text": "…" }], "encrypted_content": "…" } }
-{ "type": "response_item", "payload": { "type": "custom_tool_call", "name": "…", "input": "…" } }
-{ "type": "response_item", "payload": { "type": "custom_tool_call_output", "output": [{ "text": "…" }] } }
-```
-
-Three details drive the parser:
-
-- **`event_msg` is a parallel UI stream.** It mirrors the same conversation (`user_message`, `agent_message`, `agent_reasoning`), so reading both it and `response_item` would duplicate every message. Only `response_item` is used.
-- **Assistant output arrives in many consecutive parts.** Runs of five or more are common, so assistant text, reasoning, and tool calls are merged into a single turn rather than emitted separately.
-- **`developer` messages are injected instructions** (`skills_instructions`, `app-context`), never conversation, so they are dropped. User turns carry the same slash-command scaffolding as Claude Code (`<command-name>`, `<local-command-stdout>`, `<environment_context>`), which is stripped with the invocation reconstructed.
-
-Rollout files carry no thread name, so the title falls back through: the first user message, then the timestamp in the filename.
+Deleted or expired files cannot be reconstructed from a filename. Local exports copy bytes only from embedded attachments or structured file references that remain accessible. Paths mentioned in ordinary chat text or tool commands are not treated as permission to read arbitrary files.
 
 ## Privacy
 
-All conversation data is processed in your browser. The hosted GitHub Pages copy delivers HTML/JS over the network as any static site does; for a fully offline workflow, build `npm run build:standalone` and open the resulting `dist-standalone/index.html` directly in your browser.
+The local server binds only to `127.0.0.1`. Its API requires the local exporter's custom header, rejects foreign origins and hosts, and accepts session identifiers rather than arbitrary filesystem paths. Local attachment reads are limited to structured attachment records in an opened session. It does not scan authentication files or send conversations to the exporter website.
 
-## Deployment
+Browser attachment downloads contact the original providers or media hosts. The optional console-script fallback is subject to the page's cross-origin restrictions; the extension is preferred.
 
-`npm run build` produces `dist/` for GitHub Pages.
+## Development
+
+Use Node.js 22.13 or newer (Node 24 is used in CI):
+
+```sh
+npm ci
+npm run build
+npm run local
+```
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Vite development server |
+| `npm run local` | Serve the built local app and discover sessions |
+| `npm test` | Parser, transport, media, selection, archive and access-control tests |
+| `npm run lint` | Lint source and tests |
+| `npm run build` | Build the website in `dist/` |
+| `npm run package:downloads` | Build extension and local-app ZIPs after building the site |
+| `npm run build:standalone` | Single-file offline import UI in `dist-standalone/` |
+| `npm run deploy` | Build, package downloads and publish GitHub Pages |
+
+CI runs tests, lint, production build and downloadable packaging. Tests include a payload larger than Chrome's 64 MiB message ceiling, byte-exact image deduplication, untruncated tool results, local file attachments, cancellation and ZIP directory timestamps. Browser-provider compatibility still requires live checks when those sites change.
+
+Please report issues with the exporter version, provider and redacted log. Do not publish conversation contents, session tokens or private attachment links.
+
+## 0.2.0
+
+Rebuilt source-first interface, downloadable local app, automatic session discovery, two-stage batch confirmation, chunked extension transport, exact-image deduplication, local attachment bundles, clearer history status and corrected file/folder timestamps.

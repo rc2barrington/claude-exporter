@@ -1,4 +1,6 @@
 import { stripMarkdown } from "../utils/stripMarkdown.js";
+import browserAdapters from "../../chrome-extension/browserAdapters.js?raw";
+import exportCore from "../../chrome-extension/exportCore.js?raw";
 
 // Browser console export script for ChatGPT, Claude.ai, Gemini, Grok.
 // Stringified so it can be copied to the clipboard verbatim.
@@ -25,9 +27,12 @@ export function buildConsoleCode(opts = {}) {
   const repliesOnlyText = !!opts.repliesOnlyText;
   const header = repliesOnlyText
     ? "// AI Conversation Exporter — saves the assistant's replies as plain text (.txt)"
-    : "// AI Conversation Exporter (Claude, ChatGPT, Gemini, Grok) — bundles media into a .zip";
+    : "// AI Conversation Exporter (ChatGPT, Claude, Gemini, Grok, Google Search AI): Markdown with optional media";
   return `${header}
 (async function() {
+  ${browserAdapters}
+  ${exportCore}
+  var adapters = globalThis.AIChatExporterBrowserAdapters;
   // Replies-only mode: no media, no markdown, assistant turns only.
   var REPLIES_ONLY_TXT = ${repliesOnlyText};
   // Bound to an explicit name rather than pasted as a bare declaration: the
@@ -43,8 +48,9 @@ export function buildConsoleCode(opts = {}) {
   var isChatGPT = !isGrok && !!document.querySelector('[data-message-author-role]');
   var isClaude = !isGrok && !!document.querySelector('[data-testid="user-message"]');
   var isGemini = !isGrok && !!document.querySelector('user-query');
+  var isGoogle = adapters.isGoogleSearch(location.href);
 
-  if (!isChatGPT && !isClaude && !isGemini && !isGrok) {
+  if (!isChatGPT && !isClaude && !isGemini && !isGrok && !isGoogle) {
     alert("No messages found. Open this on a Claude.ai, ChatGPT, Gemini, or Grok conversation.");
     return;
   }
@@ -126,13 +132,13 @@ export function buildConsoleCode(opts = {}) {
       // ----- Media -----
       if (tag === 'img') {
         var src = child.currentSrc || child.src || child.getAttribute('src');
-        var alt = (child.getAttribute('alt') || '').trim();
+        var alt = adapters.imageLabel(child, isGemini);
         var fname = enqueueMedia(src, 'image', alt);
         var altText = alt ? ' - "' + alt + '"' : '';
         if (fname) {
-          out += '\\n\\n![' + alt + '](media/' + fname + ')\\n*(Uploaded Image: \`media/' + fname + '\`' + altText + ')*\\n\\n';
+          out += '\\n\\n![' + alt + '](media/' + fname + ')\\n*(Image: \`media/' + fname + '\`' + altText + ')*\\n\\n';
         } else {
-          out += '\\n\\n![' + alt + '](' + src + ')\\n*(Uploaded Image: <' + src + '>' + altText + ')*\\n\\n';
+          out += '\\n\\n![' + alt + '](' + src + ')\\n*(Image: <' + src + '>' + altText + ')*\\n\\n';
         }
         return;
       }
@@ -311,6 +317,14 @@ export function buildConsoleCode(opts = {}) {
   }
 
   console.log('[Exporter] Scanning conversation...');
+  if (isGoogle) {
+    try {
+      var googleData = await adapters.exportGoogle(document, location.href, { includeMedia: !REPLIES_ONLY_TXT });
+      ordered = googleData.messages;
+      mediaQueue = googleData.remoteQueue;
+      siteName = googleData.siteName;
+    } catch (error) { banner.remove(); throw error; }
+  } else {
   scrollTopTo(0);
   await new Promise(function(r) { setTimeout(r, 300); });
   captureVisible();
@@ -341,6 +355,7 @@ export function buildConsoleCode(opts = {}) {
     if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
     return 0;
   });
+  }
   updateBanner('Exporting: ' + ordered.length + ' messages captured. Processing media...');
   console.log('[Exporter] Captured ' + ordered.length + ' messages, ' + mediaQueue.length + ' media items');
 
@@ -391,15 +406,25 @@ export function buildConsoleCode(opts = {}) {
           }
           if (!blob || !blob.size) throw new Error('blob URL canvas capture failed');
         } else {
-          var res = await fetch(item.url, { credentials: 'include', mode: 'cors' });
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          blob = await res.blob();
+          try {
+            var res = await fetch(item.url, { credentials: 'include', mode: 'cors' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            blob = await res.blob();
+            if (!blob.size || (item.kind === 'image' && /^text\\//i.test(blob.type))) throw new Error('Invalid media response');
+          } catch (fetchError) {
+            if (!item.fallbackUrl) throw fetchError;
+            var fallback = await fetch(item.fallbackUrl);
+            if (!fallback.ok) throw new Error('HTTP ' + fallback.status);
+            blob = await fallback.blob();
+          }
         }
 
         var ext = extFromMime(blob.type);
         if (ext && !item.filename.toLowerCase().endsWith(ext)) {
+          var oldFilename = item.filename;
           var stem = item.filename.replace(/\\.[a-z0-9]{1,5}$/i, '');
           item.filename = stem + ext;
+          ordered.forEach(function(message) { message.text = message.text.split('media/' + oldFilename + ')').join('media/' + item.filename + ')'); });
         }
         savedMedia.push({ filename: item.filename, blob: blob });
       } catch (err) {
@@ -409,6 +434,7 @@ export function buildConsoleCode(opts = {}) {
     }
   }
 
+  if (!JSZip) mediaQueue.forEach(function(item) { failedFetches.push({ url: item.url, filename: item.filename, error: 'Media archive library unavailable' }); });
   // Rewrite media/* references for failed fetches back to original URL.
   var failedFilenames = new Set(failedFetches.map(function(f) { return f.filename; }));
   ordered.forEach(function(m) {
@@ -421,8 +447,10 @@ export function buildConsoleCode(opts = {}) {
     });
   });
 
+  var dedupedMedia = await globalThis.AIChatExporterCore.deduplicateImages(savedMedia, ordered);
+  savedMedia = dedupedMedia.savedMedia;
   // ----- Markdown -----
-  var title = document.title.replace(/[-|].*(Claude|ChatGPT|Gemini|Grok).*/i, '').trim() || (siteName + ' Conversation');
+  var title = isGoogle ? googleData.title : document.title.replace(/[-|].*(Claude|ChatGPT|Gemini|Grok).*/i, '').trim() || (siteName + ' Conversation');
   var date = new Date().toISOString();
   var nl = '\\n';
   var md = '---' + nl;
@@ -441,7 +469,7 @@ export function buildConsoleCode(opts = {}) {
 
   // ----- Download -----
   var safeBase = title.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 60);
-  var stamp = new Date().toISOString().slice(0, 10);
+  var stamp = globalThis.AIChatExporterCore.zipLocalDate().toISOString().slice(0, 10);
 
   if (REPLIES_ONLY_TXT) {
     var replies = ordered
@@ -457,7 +485,7 @@ export function buildConsoleCode(opts = {}) {
     var txtBlob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
     triggerDownload(txtBlob, safeBase + '.txt');
     console.log('[Exporter] Saved ' + safeBase + '.txt (' + replies.length + ' replies, plain text)');
-  } else if (JSZip && (savedMedia.length > 0 || mediaQueue.length > 0)) {
+  } else if (JSZip && savedMedia.length > 0) {
     var zip = new JSZip();
     // JSZip encodes each entry's DOS timestamp from UTC getters, but the ZIP
     // format defines that field as local time, so extractors read it back as
@@ -467,12 +495,7 @@ export function buildConsoleCode(opts = {}) {
     zip.file('conversation.md', md, { date: zipStamp });
     var folder = zip.folder('media');
     savedMedia.forEach(function(m) { folder.file(m.filename, m.blob, { date: zipStamp }); });
-    if (failedFetches.length) {
-      var report = failedFetches.map(function(f) {
-        return f.filename + '\\t' + f.url + '\\t' + f.error;
-      }).join('\\n');
-      zip.file('media-fetch-errors.tsv', 'filename\\turl\\terror\\n' + report, { date: zipStamp });
-    }
+    globalThis.AIChatExporterCore.stampZip(zip);
     var zipBlob = await zip.generateAsync({ type: 'blob' });
     triggerDownload(zipBlob, safeBase + '-' + stamp + '.zip');
     console.log('[Exporter] Saved zip with ' + savedMedia.length + '/' + mediaQueue.length + ' media items');

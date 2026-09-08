@@ -13,31 +13,28 @@ document.addEventListener("DOMContentLoaded", () => {
   const toggleMedia = document.getElementById("toggle-media");
 
   let detectedTabs = [];
+  const selection = globalThis.AIChatExporterSelection.createSelectionState([]);
+  let popupExporting = false;
+  let cancelRequested = false;
+  let activeBatchTargetIds = new Set();
 
-  // The popup is destroyed every time it closes, so a selection kept only in
-  // the DOM is lost on reopen. Persist the chosen tab ids instead: without
-  // this, reopening rebuilt the list from scratch and a single Export click
-  // ran against every detected tab rather than the one that was picked.
-  const SELECTION_KEY = "selectedTabIds";
+  // Older versions remembered checked rows in extension storage. Delete that
+  // legacy value so it cannot return if Chrome briefly runs an older popup or
+  // restores extension state during an unpacked-extension reload.
+  chrome.storage.local.remove("selectedTabIds", () => {
+    void chrome.runtime.lastError;
+  });
 
-  async function loadSelection() {
-    try {
-      const stored = await chrome.storage.local.get(SELECTION_KEY);
-      return new Set(stored[SELECTION_KEY] || []);
-    } catch (e) {
-      return new Set();
-    }
-  }
-
-  async function saveSelection() {
-    const ids = Array.from(document.querySelectorAll(".tab-select:checked"))
-      .map(cb => parseInt(cb.getAttribute("data-tab-id"), 10))
-      .filter(id => !isNaN(id));
-    try {
-      await chrome.storage.local.set({ [SELECTION_KEY]: ids });
-    } catch (e) {
-      // Storage unavailable: selection just won't survive the next reopen.
-    }
+  function applyExportingUi() {
+    exportBtn.style.display = popupExporting ? "none" : "block";
+    cancelBtn.style.display = popupExporting ? "block" : "none";
+    cancelBtn.disabled = cancelRequested;
+    cancelBtn.textContent = cancelRequested ? "Stopping..." : "Cancel Export";
+    document.querySelectorAll(
+      ".tab-select, #select-all-checkbox, .switch input"
+    ).forEach(element => {
+      element.disabled = popupExporting;
+    });
   }
 
   // Log status message to panel
@@ -55,17 +52,22 @@ document.addEventListener("DOMContentLoaded", () => {
     if (request.action === "progress") {
       logStatus(request.message, request.type || "info", request.time);
       
-      // Re-enable UI elements on batch completion, cancellation, or error
+      // A per-tab error is not the end of a multi-tab batch. Only a terminal
+      // batch message may re-enable the controls. The old `type === "error"`
+      // check re-enabled the popup after the first failure and launched a noisy
+      // 120-tab rescan while the remaining exports were still running.
+      const isTerminal =
+        request.message === "Batch export sequence completed." ||
+        request.message.startsWith("Batch export was cancelled.") ||
+        request.message.startsWith("Batch export failed:");
       if (
-        request.message === "Batch export sequence completed." || 
-        request.message === "Batch export was cancelled." ||
-        request.type === "error"
+        isTerminal
       ) {
-        exportBtn.style.display = "block";
-        exportBtn.disabled = false;
-        cancelBtn.style.display = "none";
-        document.querySelectorAll(".tab-select, #select-all-checkbox, .switch input").forEach(el => el.disabled = false);
-        scanTabs();
+        popupExporting = false;
+        cancelRequested = false;
+        activeBatchTargetIds = new Set();
+        applyExportingUi();
+        updateExportButtonState();
       }
     }
   });
@@ -83,27 +85,14 @@ document.addEventListener("DOMContentLoaded", () => {
       // its destination.
       const tabUrl = (tab) => (tab.url || tab.pendingUrl || "").toLowerCase();
       detectedTabs = tabs.filter(tab => {
-        const url = tabUrl(tab);
-        return url.includes("chatgpt.com") ||
-               url.includes("chat.openai.com") ||
-               url.includes("claude.ai") ||
-               url.includes("claude.com") ||
-               url.includes("gemini.google.com") ||
-               url.includes("grok.com");
+        try {
+          const url = new URL(tabUrl(tab));
+          return /(^|\.)(chatgpt\.com|chat\.openai\.com|claude\.ai|claude\.com|gemini\.google\.com|grok\.com)$/.test(url.hostname) ||
+            (/^(www\.)?google\.com$/.test(url.hostname) && /^\/(search|aimode)\/?$/.test(url.pathname));
+        } catch { return false; }
       });
 
-      // Diagnostic: tally every open tab by hostname so missing-tab
-      // reports are debuggable ("N tabs across M windows" + AI hosts).
-      const hostCounts = {};
-      tabs.forEach(t => {
-        try { const h = new URL(t.url || t.pendingUrl || "about:blank").hostname || "(none)"; hostCounts[h] = (hostCounts[h] || 0) + 1; } catch (e) {}
-      });
       const windowCount = new Set(tabs.map(t => t.windowId)).size;
-      const aiHosts = Object.entries(hostCounts)
-        .filter(([h]) => /chatgpt|openai|claude|gemini|grok/.test(h))
-        .map(([h, n]) => `${h}: ${n}`)
-        .join(", ");
-      logStatus(`Scanned ${tabs.length} tabs in ${windowCount} window(s). AI hosts: ${aiHosts || "none"}.`, "info");
 
       // Surface the tab the popup was opened on: sort it to the top of
       // the list and flag it, so it's findable among many similar rows.
@@ -131,15 +120,22 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         `;
         exportBtn.disabled = true;
+        applyExportingUi();
         return;
       }
 
       selectAllContainer.style.display = "flex";
-      detectedCount.textContent = `${detectedTabs.length} tab(s) detected`;
+      detectedCount.textContent = `${detectedTabs.length} chat tab(s) across ${windowCount} Chrome window(s)`;
 
-      // Nothing is selected by default. Exporting every open chat is the
-      // expensive, hard-to-undo action, so it has to be chosen explicitly.
-      const savedSelection = await loadSelection();
+      // A fresh popup starts with the in-memory selection's initial empty set.
+      // Never restore old checks across popup openings. During an active batch,
+      // show only the worker's locked targets so reopening still reports the
+      // exact immutable batch that is already running.
+      const availableIds = new Set(detectedTabs.map(tab => tab.id));
+      const visibleSelection = popupExporting
+        ? Array.from(activeBatchTargetIds)
+        : selection.ids();
+      selection.replace(visibleSelection.filter(id => availableIds.has(id)));
 
       // Populate list
       detectedTabs.forEach((tab) => {
@@ -151,7 +147,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Determine site and badge style
         let siteClass = "site-chatgpt";
         let siteLabel = "ChatGPT";
-        const url = tab.url.toLowerCase();
+        const url = (tab.url || tab.pendingUrl || "").toLowerCase();
         if (url.includes("claude.ai") || url.includes("claude.com")) {
           siteClass = "site-claude";
           siteLabel = "Claude";
@@ -161,10 +157,13 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (url.includes("grok.com")) {
           siteClass = "site-grok";
           siteLabel = "Grok";
+        } else if (/^https:\/\/(www\.)?google\.com\//.test(url)) {
+          siteClass = "site-gemini";
+          siteLabel = new URL(url).searchParams.get("udm") === "50" || url.includes("/aimode") ? "AI Mode" : "AI Overview";
         }
 
         item.innerHTML = `
-          <input type="checkbox" class="tab-checkbox tab-select" data-tab-id="${tab.id}"${savedSelection.has(tab.id) ? " checked" : ""} />
+          <input type="checkbox" autocomplete="off" class="tab-checkbox tab-select" data-tab-id="${tab.id}"${selection.has(tab.id) ? " checked" : ""} />
           <span class="site-badge ${siteClass}">${siteLabel}</span>
           <span class="tab-title" title="${escapeHtml(tab.title || "")}">${escapeHtml(tab.title || "Untitled Chat")}</span>
           ${isCurrent ? '<span class="site-badge current-badge">THIS TAB</span>' : ''}
@@ -175,13 +174,21 @@ document.addEventListener("DOMContentLoaded", () => {
       // Wire checkbox handlers
       const itemCheckboxes = document.querySelectorAll(".tab-select");
       itemCheckboxes.forEach(cb => {
-        cb.addEventListener("change", updateExportButtonState);
+        cb.addEventListener("change", () => {
+          const id = Number(cb.getAttribute("data-tab-id"));
+          if (popupExporting) {
+            cb.checked = activeBatchTargetIds.has(id);
+            return;
+          }
+          selection.set(id, cb.checked);
+          updateExportButtonState();
+        });
       });
 
-      // Reflect the restored selection in the button and Select All states.
-      // This persists too, which prunes ids for tabs that are no longer open
-      // so a recycled tab id can never arrive pre-selected.
+      // Reflect the current popup-session selection in the button and Select
+      // All states. Closing the popup intentionally discards this selection.
       updateExportButtonState();
+      applyExportingUi();
 
     } catch (err) {
       logStatus(`Error scanning tabs: ${err.message || err}`, "error");
@@ -189,24 +196,32 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Update export button state based on selections
-  function updateExportButtonState(opts) {
-    const selectedCount = document.querySelectorAll(".tab-select:checked").length;
-    exportBtn.disabled = selectedCount === 0;
+  function updateExportButtonState() {
+    const availableIds = new Set(detectedTabs.map(tab => tab.id));
+    const selectedIds = selection.ids().filter(id => availableIds.has(id));
+    const selectedCount = selectedIds.length;
+    exportBtn.disabled = popupExporting || selectedCount === 0;
+
+    document.querySelectorAll(".tab-select").forEach(cb => {
+      const id = Number(cb.getAttribute("data-tab-id"));
+      cb.checked = selection.has(id);
+    });
 
     const allCount = document.querySelectorAll(".tab-select").length;
     // With nothing selected, Select All must read unchecked rather than
     // "all zero are selected".
     selectAllCheckbox.checked = allCount > 0 && selectedCount === allCount;
 
-    if (!opts || opts.persist !== false) saveSelection();
   }
 
   // Select all / Deselect all
   selectAllCheckbox.addEventListener("change", (e) => {
+    if (popupExporting) {
+      e.target.checked = selection.ids().length === detectedTabs.length;
+      return;
+    }
     const checked = e.target.checked;
-    document.querySelectorAll(".tab-select").forEach(cb => {
-      cb.checked = checked;
-    });
+    selection.replace(checked ? detectedTabs.map(tab => tab.id) : []);
     updateExportButtonState();
   });
 
@@ -220,51 +235,107 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Main export action
   exportBtn.addEventListener("click", async () => {
-    const checkedBoxes = document.querySelectorAll(".tab-select:checked");
-    const targetTabIds = Array.from(checkedBoxes).map(cb => parseInt(cb.getAttribute("data-tab-id"), 10));
+    if (popupExporting) return;
+    const targets = globalThis.AIChatExporterSelection.targetsForSelection(
+      detectedTabs,
+      selection.ids()
+    );
+    const targetTabIds = targets.map(target => target.id);
 
     if (targetTabIds.length === 0) return;
+    if (targetTabIds.length > 1 && !(await confirmBatch(targets))) return;
 
-    // Disable UI elements and switch buttons
-    exportBtn.style.display = "none";
-    cancelBtn.style.display = "block";
-    cancelBtn.disabled = false;
-    document.querySelectorAll(".tab-select, #select-all-checkbox, .switch input").forEach(el => el.disabled = true);
+    // Each run gets a clean status panel so stale scan and export messages do
+    // not obscure the exact result of this batch.
+    statusPanel.innerHTML = "";
 
-    logStatus(`Delegating export of ${targetTabIds.length} chat(s) to background worker...`, "info");
+    // Lock the exact snapshot before messaging the worker. A reopened popup
+    // receives the same ids from getStatus and cannot visually edit a batch
+    // that has already started.
+    popupExporting = true;
+    cancelRequested = false;
+    activeBatchTargetIds = new Set(targetTabIds);
+    applyExportingUi();
+
+    logStatus(
+      `Locked selection and delegating exactly ${targetTabIds.length} chat(s) to the background worker...`,
+      "info"
+    );
 
     chrome.runtime.sendMessage({
       action: "startExport",
+      // Keep the numeric list for a previous service worker that may still be
+      // alive during an unpacked-extension reload. The current worker prefers
+      // tabDetails so it retains inactive cross-window URLs.
       tabs: targetTabIds,
+      tabDetails: targets,
+      confirmation: { steps: 2, targetIds: targetTabIds },
       options: {
         includeThinking: toggleThinking.checked,
         includeTools: toggleTools.checked,
         includeMedia: toggleMedia.checked
       }
     }, (response) => {
-      if (chrome.runtime.lastError) {
-        logStatus(`Error launching background worker: ${chrome.runtime.lastError.message}`, "error");
-        exportBtn.style.display = "block";
-        exportBtn.disabled = false;
-        cancelBtn.style.display = "none";
-        document.querySelectorAll(".tab-select, #select-all-checkbox, .switch input").forEach(el => el.disabled = false);
+      if (chrome.runtime.lastError || !response || response.status !== "started") {
+        const reason = chrome.runtime.lastError
+          ? chrome.runtime.lastError.message
+          : response && response.error || "The background worker rejected the batch.";
+        logStatus(`Error launching background worker: ${reason}`, "error");
+        popupExporting = false;
+        cancelRequested = false;
+        activeBatchTargetIds = new Set();
+        applyExportingUi();
+        updateExportButtonState();
       } else {
-        logStatus("Background export started! You can click away or close this popup safely.", "success");
+        activeBatchTargetIds = new Set(response.targetTabIds || targetTabIds);
+        logStatus(
+          `Background export started with ${activeBatchTargetIds.size} locked chat(s). ` +
+          "You can click away or close this popup safely.",
+          "success"
+        );
       }
     });
   });
 
+  function confirmBatch(targets) {
+    return new Promise(resolve => {
+      const dialog = document.createElement("dialog");
+      dialog.style.cssText = "width:calc(100% - 28px);max-height:90vh;padding:22px;border:1px solid #64748b;border-radius:12px;background:#111827;color:#f8fafc;font:14px system-ui;";
+      let step = 1;
+      const finish = value => { dialog.close(); dialog.remove(); resolve(value); };
+      function render() {
+        dialog.innerHTML = `<p>Batch confirmation ${step} of 2</p><h3>${step === 1 ? "Review selected chats" : "Confirm this batch export"}</h3><p>${targets.length} chats will be exported:</p><ul style="max-height:210px;overflow:auto;padding-left:20px">${targets.map(t => `<li style="margin:9px 0">${escapeHtml(t.title)}</li>`).join("")}</ul><div style="display:flex;gap:8px;margin-top:20px"><button data-cancel style="padding:10px">Cancel</button><button data-confirm style="padding:10px">${step === 1 ? "These chats are correct" : "Export " + targets.length + " chats now"}</button></div>`;
+        dialog.querySelector("[data-cancel]").onclick = () => finish(false);
+        dialog.querySelector("[data-confirm]").onclick = () => { if (step === 1) { step = 2; render(); } else finish(true); };
+      }
+      dialog.addEventListener("cancel", event => { event.preventDefault(); finish(false); });
+      render(); document.body.appendChild(dialog); dialog.showModal();
+    });
+  }
+
   // Cancel export action
   cancelBtn.addEventListener("click", () => {
-    cancelBtn.disabled = true;
-    logStatus("Sending cancellation request...", "info");
+    if (cancelRequested) return;
+    cancelRequested = true;
+    applyExportingUi();
+    logStatus("Cancel requested. Stopping active requests, packaging, and downloads...", "info");
     
     chrome.runtime.sendMessage({ action: "cancelExport" }, (response) => {
       if (chrome.runtime.lastError) {
         logStatus(`Error sending cancel: ${chrome.runtime.lastError.message}`, "error");
-        cancelBtn.disabled = false;
+        cancelRequested = false;
+        applyExportingUi();
+      } else if (response && response.status === "idle") {
+        logStatus("The background worker reports that no export is still running.", "info");
+        popupExporting = false;
+        cancelRequested = false;
+        activeBatchTargetIds = new Set();
+        applyExportingUi();
+        updateExportButtonState();
       } else {
-        logStatus("Cancel signal sent to background worker.", "info");
+        if (popupExporting) {
+          logStatus("Background worker accepted the cancellation.", "info");
+        }
       }
     });
   });
@@ -273,6 +344,9 @@ document.addEventListener("DOMContentLoaded", () => {
   chrome.runtime.sendMessage({ action: "getStatus" }, (response) => {
     if (chrome.runtime.lastError) {
       // Background worker might not be active/initialized yet
+      popupExporting = false;
+      activeBatchTargetIds = new Set();
+      selection.replace([]);
       scanTabs();
       return;
     }
@@ -285,13 +359,14 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    if (response && response.isExporting) {
-      // Disable UI elements
-      exportBtn.style.display = "none";
-      cancelBtn.style.display = "block";
-      cancelBtn.disabled = false;
-      document.querySelectorAll(".tab-select, #select-all-checkbox, .switch input").forEach(el => el.disabled = true);
-    }
+    popupExporting = !!(response && response.isExporting);
+    cancelRequested = !!(response && response.isCancelling);
+    activeBatchTargetIds = new Set(
+      response && Array.isArray(response.activeTargetIds)
+        ? response.activeTargetIds
+        : []
+    );
+    if (!popupExporting) selection.replace([]);
     // Run initial scan to discover tabs
     scanTabs();
   });

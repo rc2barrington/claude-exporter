@@ -34,6 +34,11 @@ export default defineConfig([
     },
   },
   // Chrome extension (MV3): service worker + content/offscreen/popup scripts.
+  {
+    files: ['server/**/*.js', 'scripts/**/*.js'],
+    extends: [js.configs.recommended],
+    languageOptions: { ecmaVersion: 'latest', globals: globals.node },
+  },
   // These run as classic scripts with the extension APIs and a globally-loaded JSZip.
   {
     files: ['chrome-extension/**/*.js'],

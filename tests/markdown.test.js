@@ -62,6 +62,6 @@ describe("generateMarkdown", () => {
   it("falls back gracefully when source is missing", () => {
     const noSrc = { ...session, source: undefined };
     const md = generateMarkdown(noSrc, {});
-    expect(md).toContain("Exported from Claude Code");
+    expect(md).toContain("Exported from AI chat");
   });
 });

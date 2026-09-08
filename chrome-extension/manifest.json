@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AI Chat Exporter",
-  "version": "0.1.0",
-  "description": "Export your ChatGPT, Claude, Gemini, and Grok conversations to Markdown, locally and privately.",
+  "version": "0.2.0",
+  "description": "Export ChatGPT, Claude, Gemini, Grok, Google AI Overviews and AI Mode to Markdown, locally and privately.",
   "permissions": [
     "tabs",
     "scripting",
@@ -11,12 +11,23 @@
     "storage"
   ],
   "host_permissions": [
+    "https://www.google.com/*",
+    "https://google.com/*",
     "*://*.chatgpt.com/*",
     "*://chat.openai.com/*",
+    "*://*.openai.com/*",
+    "*://*.oaiusercontent.com/*",
     "*://*.claude.ai/*",
     "*://*.claude.com/*",
+    "*://*.claudeusercontent.com/*",
+    "*://*.anthropic.com/*",
     "*://*.gemini.google.com/*",
-    "*://*.grok.com/*"
+    "*://*.googleusercontent.com/*",
+    "*://*.googleapis.com/*",
+    "*://*.gstatic.com/*",
+    "*://*.grok.com/*",
+    "*://*.x.ai/*",
+    "*://*.blob.core.windows.net/*"
   ],
   "background": {
     "service_worker": "background.js"
